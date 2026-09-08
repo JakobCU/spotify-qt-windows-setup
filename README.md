@@ -17,7 +17,9 @@ touching it.
    `%LOCALAPPDATA%\Programs\spotify-qt`. Self-contained, Qt DLLs bundled by
    `windeployqt`, so no Qt install and no compiler.
 2. **librespot**, built from crates.io, which is what actually decodes audio and
-   registers as a Spotify Connect device on your speakers.
+   registers as a Spotify Connect device on your speakers. The build lands in
+   `~\.cargo\bin`; the script copies it next to spotify-qt and the app runs that copy,
+   so the Rust toolchain is only needed while building.
 3. **The wiring**, so librespot starts and stops together with spotify-qt and you
    never launch it by hand.
 
@@ -38,7 +40,9 @@ it (`src/spotifyclient/runner.cpp`), it just does not ship it.
 
 **1. librespot ships no Windows binaries.**
 Release v0.8.0 has zero assets and there is no winget package. It has to be compiled.
-Requires [rustup](https://rustup.rs).
+Requires [rustup](https://rustup.rs). If you already have a `librespot.exe` from another
+machine, drop it into `%LOCALAPPDATA%\Programs\spotify-qt` and the script skips the
+toolchain entirely.
 
 **2. The MSVC toolchain needs Visual Studio, which you probably do not want.**
 Rust's default `x86_64-pc-windows-msvc` cannot link without the MSVC linker and Windows
@@ -119,14 +123,17 @@ frame and normal edge-drag resizing, at the cost of the integrated title bar but
 auto-update on the portable build.
 
 **Updating librespot** means `cargo install librespot --locked` again, with the MinGW
-`bin` on `PATH`, or you get the `dlltool` error from gotcha 3.
+`bin` on `PATH` (or you get the `dlltool` error from gotcha 3), then re-running the
+script. It copies the newer build next to the app.
 
-**Cleaning up Rust silently kills playback.** librespot lives in `~\.cargo\bin`, so a
-disk cleanup that removes `~\.cargo` and `~\.rustup` (they are obvious multi-GB
-candidates when the drive is full) takes the player with it. Symptom: spotify-qt starts
-normally, the device list is empty, and there is no `librespot.exe` process. Recovery is
-reinstalling rustup with the GNU host and re-running the script, which needs about
-3 GB free during the build:
+**Rust is only needed to build.** spotify-qt runs
+`%LOCALAPPDATA%\Programs\spotify-qt\librespot.exe`, so deleting `~\.cargo` and
+`~\.rustup` to free disk space is safe. Before the script copied the exe there, the app
+ran it straight from `~\.cargo\bin`, and a disk cleanup took the player with it: spotify-qt
+started normally, the device list stayed empty, and there was no `librespot.exe` process.
+If you see that on an older install, re-run the script once with the cargo build still
+present; it copies and re-wires. If the cargo build is gone too, reinstall rustup with the
+GNU host and re-run, which needs about 3 GB free during the build:
 
 ```powershell
 rustup-init.exe -y --default-host x86_64-pc-windows-gnu --default-toolchain stable --profile minimal

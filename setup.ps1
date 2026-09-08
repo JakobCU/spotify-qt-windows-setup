@@ -75,6 +75,12 @@ if (Get-Process spotify-qt -ErrorAction SilentlyContinue) {
 }
 Write-Ok 'spotify-qt is not running'
 
+# A running librespot holds the exe we are about to replace.
+if (Get-Process librespot -ErrorAction SilentlyContinue) {
+    throw 'librespot is running. Closing spotify-qt stops it; if it is a stray process, end it.'
+}
+Write-Ok 'librespot is not running'
+
 # ---------------------------------------------------------------------------
 # 1. spotify-qt (prebuilt, no toolchain required)
 # ---------------------------------------------------------------------------
@@ -126,59 +132,54 @@ if ($SkipLibrespot) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Rust toolchain
+# 2. librespot
 # ---------------------------------------------------------------------------
-Write-Step 'Rust toolchain'
-
-if (-not (Test-Exe 'rustup')) {
-    throw 'rustup not found. Install Rust from https://rustup.rs and re-run.'
-}
-
-if ((rustup toolchain list) -match [regex]::Escape($RustToolchain)) {
-    Write-Ok "$RustToolchain already installed"
-} else {
-    Write-Host "    installing $RustToolchain ..."
-    rustup toolchain install $RustToolchain | Out-Null
-    Write-Ok "$RustToolchain installed"
-}
-
-# ---------------------------------------------------------------------------
-# 3. dlltool (the step that trips people up)
-# ---------------------------------------------------------------------------
-# rustup's rust-mingw component ships a linker but NOT dlltool.exe. The
-# windows-sys crates use raw-dylib on the gnu target and need dlltool to
-# generate import libraries, so without it the build dies with:
-#   error: error calling dlltool 'dlltool.exe': program not found
-Write-Step 'dlltool (MinGW binutils)'
-
-$mingwBin = Get-MingwBin
-if ($mingwBin) {
-    Write-Ok "dlltool present: $mingwBin"
-}
-else {
-    if (-not (Test-Exe 'winget')) {
-        throw "dlltool.exe missing and winget unavailable. Install MinGW-w64 manually and re-run."
-    }
-    Write-Host "    installing $MingwPackageId via winget ..."
-    winget install --id $MingwPackageId --accept-package-agreements `
-                   --accept-source-agreements --disable-interactivity | Out-Null
-
-    $mingwBin = Get-MingwBin
-    if (-not $mingwBin) { throw 'MinGW installed but dlltool.exe still not found.' }
-    Write-Ok "dlltool installed: $mingwBin"
-}
-
-# ---------------------------------------------------------------------------
-# 4. librespot
-# ---------------------------------------------------------------------------
+# cargo installs into ~\.cargo\bin, and that directory is the first thing a
+# disk cleanup deletes. spotify-qt therefore runs its own copy next to the app,
+# and the Rust toolchain is only needed when there is nothing to copy.
 Write-Step 'librespot'
 
-$librespot = "$env:USERPROFILE\.cargo\bin\librespot.exe"
+$built     = "$env:USERPROFILE\.cargo\bin\librespot.exe"   # what cargo produces
+$librespot = Join-Path $InstallDir 'librespot.exe'         # what spotify-qt runs
 
-if ((Test-Path $librespot) -and -not $Force) {
-    Write-Ok "already built: $librespot"
-}
-else {
+$needBuild = $Force -or -not ((Test-Path $built) -or (Test-Path $librespot))
+
+if ($needBuild) {
+    # 2a. Rust toolchain
+    if (-not (Test-Exe 'rustup')) {
+        throw 'rustup not found. Install Rust from https://rustup.rs and re-run.'
+    }
+    if ((rustup toolchain list) -match [regex]::Escape($RustToolchain)) {
+        Write-Ok "$RustToolchain already installed"
+    } else {
+        Write-Host "    installing $RustToolchain ..."
+        rustup toolchain install $RustToolchain | Out-Null
+        Write-Ok "$RustToolchain installed"
+    }
+
+    # 2b. dlltool (the step that trips people up)
+    # rustup's rust-mingw component ships a linker but NOT dlltool.exe. The
+    # windows-sys crates use raw-dylib on the gnu target and need dlltool to
+    # generate import libraries, so without it the build dies with:
+    #   error: error calling dlltool 'dlltool.exe': program not found
+    $mingwBin = Get-MingwBin
+    if ($mingwBin) {
+        Write-Ok "dlltool present: $mingwBin"
+    }
+    else {
+        if (-not (Test-Exe 'winget')) {
+            throw "dlltool.exe missing and winget unavailable. Install MinGW-w64 manually and re-run."
+        }
+        Write-Host "    installing $MingwPackageId via winget ..."
+        winget install --id $MingwPackageId --accept-package-agreements `
+                       --accept-source-agreements --disable-interactivity | Out-Null
+
+        $mingwBin = Get-MingwBin
+        if (-not $mingwBin) { throw 'MinGW installed but dlltool.exe still not found.' }
+        Write-Ok "dlltool installed: $mingwBin"
+    }
+
+    # 2c. build
     Write-Host '    building from crates.io, expect several minutes ...'
     $saved = $env:PATH
     try {
@@ -190,8 +191,24 @@ else {
     }
     finally { $env:PATH = $saved }
 
-    if (-not (Test-Path $librespot)) { throw 'Build reported success but librespot.exe is missing.' }
-    Write-Ok "built: $librespot"
+    if (-not (Test-Path $built)) { throw 'Build reported success but librespot.exe is missing.' }
+    Write-Ok "built: $built"
+}
+
+# 2d. Refresh the app-local copy whenever cargo's build is newer or the copy is
+# missing. Updating librespot is therefore `cargo install` plus a re-run.
+if (Test-Path $built) {
+    $copyStale = -not (Test-Path $librespot) -or
+                 ((Get-Item $built).LastWriteTime -gt (Get-Item $librespot).LastWriteTime)
+    if ($copyStale) {
+        Copy-Item $built $librespot -Force
+        Write-Ok "copied to $librespot"
+    } else {
+        Write-Ok "app-local copy is current: $librespot"
+    }
+}
+else {
+    Write-Ok "no cargo build present, using app-local copy: $librespot"
 }
 
 # spotify-qt refuses clients without OAuth support, so verify before wiring.
@@ -201,7 +218,7 @@ if (-not ((& $librespot --help 2>&1 | Out-String) -match '--enable-oauth')) {
 Write-Ok '--enable-oauth supported'
 
 # ---------------------------------------------------------------------------
-# 5. Wire librespot into the spotify-qt config
+# 3. Wire librespot into the spotify-qt config
 # ---------------------------------------------------------------------------
 Write-Step 'spotify-qt config'
 

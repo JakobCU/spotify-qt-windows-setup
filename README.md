@@ -84,6 +84,15 @@ programmatic route left is hand-writing the `Taskband` registry blob, which wipe
 existing pins when it goes wrong. Right-click the running icon instead. The script does
 create a Start Menu shortcut, so it is at least searchable.
 
+**7. On networks that block port 4070 the device list stays empty for 40 seconds.**
+Spotify's access points listen on 4070, 443 and 80, and librespot tries 4070 first.
+Corporate firewalls often drop that port silently, so librespot sits through two 21 s
+connect timeouts before it retries on 443 and logs in fine. Meanwhile spotify-qt shows
+no device, which looks exactly like a broken install and invites a pointless restart.
+The script therefore adds `--ap-port 443` to `additional_arguments`; the device then
+appears in about 2 s. Check with `librespot -v` if in doubt, the log says
+`Connection to "ap-....spotify.com:4070" failed`.
+
 ## After the script
 
 1. **Bring your own Spotify app credentials.** spotify-qt bundles none. Create an app at
@@ -112,11 +121,23 @@ auto-update on the portable build.
 **Updating librespot** means `cargo install librespot --locked` again, with the MinGW
 `bin` on `PATH`, or you get the `dlltool` error from gotcha 3.
 
+**Cleaning up Rust silently kills playback.** librespot lives in `~\.cargo\bin`, so a
+disk cleanup that removes `~\.cargo` and `~\.rustup` (they are obvious multi-GB
+candidates when the drive is full) takes the player with it. Symptom: spotify-qt starts
+normally, the device list is empty, and there is no `librespot.exe` process. Recovery is
+reinstalling rustup with the GNU host and re-running the script, which needs about
+3 GB free during the build:
+
+```powershell
+rustup-init.exe -y --default-host x86_64-pc-windows-gnu --default-toolchain stable --profile minimal
+.\setup.ps1
+```
+
 ## Verified on
 
 Windows 11 Enterprise 26100, x64, spotify-qt v4.0.4, librespot 0.8.0,
-Rust 1.97.1 (`stable-x86_64-pc-windows-gnu`), WinLibs binutils 2.47.
-Build took about 5m30s on 14 cores.
+Rust 1.98.1 (`stable-x86_64-pc-windows-gnu`), WinLibs binutils 2.47.
+Build took about 5m30s on 14 cores. Last rebuilt 2026-09-08.
 
 ## Credit
 

@@ -223,6 +223,14 @@ $cfg.Spotify.start_client = $true   # start and stop librespot with the app
 $cfg.Spotify.always_start = $true   # start it even if other devices exist
 $cfg.Spotify.backend      = ''      # empty = librespot default = rodio (WASAPI)
 
+# Corporate networks often block Spotify's default access point port 4070.
+# librespot then burns two 21 s connect timeouts before it falls back to 443,
+# and the device list stays empty for ~40 s, which reads like a broken install.
+# Forcing 443 makes the device show up in about 2 s. Left alone if already set.
+if ($cfg.Spotify.additional_arguments -notmatch '(^|\s)(-a|--ap-port)(\s|=|$)') {
+    $cfg.Spotify.additional_arguments = "$($cfg.Spotify.additional_arguments) --ap-port 443".Trim()
+}
+
 $cfg | ConvertTo-Json -Depth 20 | Set-Content $ConfigPath -Encoding UTF8
 
 # Prove the write did not corrupt the credentials.
